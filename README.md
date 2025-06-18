@@ -1,0 +1,1 @@
+Train Seat Monitor Bot helps you track ticket availability for Belarusian trains via BC MyTrain. Enter your train number, and get instant alerts when seats open up. Perfect for busy travelers who want to secure tickets quickly without constant manual checks.
