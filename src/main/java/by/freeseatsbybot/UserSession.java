@@ -2,7 +2,8 @@ package by.freeseatsbybot;
 
 public class UserSession {
     private BotState state = BotState.MAIN_MENU;
-    private String city;
+    private String fromCity;
+    private String toCity;
     private String date;
     private String trainNumber;
 
@@ -12,11 +13,17 @@ public class UserSession {
     public void setState(BotState state) {
         this.state = state;
     }
-    public String getCity() {
-        return city;
+    public String getFromCity() {
+        return fromCity;
     }
-    public void setCity(String city) {
-        this.city = city;
+    public void setFromCity(String fromCity) {
+        this.fromCity = fromCity;
+    }
+    public String getToCity() {
+        return toCity;
+    }
+    public void setToCity(String toCity) {
+        this.toCity = toCity;
     }
     public String getDate() {
         return date;
