@@ -2,7 +2,8 @@ package by.freeseatsbybot;
 
 public enum BotState {
     MAIN_MENU,
-    AWAITING_CITY,
+    AWAITING_FROM_CITY,
+    AWAITING_TO_CITY,
     AWAITING_DATE,
     AWAITING_TRAIN_CHOICE,
     AWAITING_TRAIN_NUMBER,

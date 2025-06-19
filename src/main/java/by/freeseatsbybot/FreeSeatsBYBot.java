@@ -1,5 +1,7 @@
 package by.freeseatsbybot;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.Message;
@@ -7,23 +9,39 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import jakarta.annotation.PostConstruct;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
+@Component
 public class FreeSeatsBYBot extends TelegramLongPollingBot {
-    private static final String BOT_USERNAME = System.getenv("BOT_USERNAME");
-    private static final String BOT_TOKEN = System.getenv("BOT_TOKEN");
-
+    @Value("${bot.username}")
+    private String botUsername;
+    @Value("${bot.token}")
+    private String botToken;
     private final Map<Long, UserSession> userSessions = new HashMap<>();
+    private final TrainMonitorService monitorService;
+    private final TrainParser trainParser;
+
+    public FreeSeatsBYBot(TrainMonitorService monitorService, TrainParser trainParser) {
+        this.monitorService = monitorService;
+        this.trainParser = trainParser;
+    }
+
+    @PostConstruct
+    public void init() {
+        monitorService.setSendTextConsumer(this::sendText);
+    }
 
     @Override
     public String getBotUsername() {
-        return BOT_USERNAME;
+        return botUsername;
     }
 
     @Override
     public String getBotToken() {
-        return BOT_TOKEN;
+        return botToken;
     }
 
     @Override
@@ -59,34 +77,44 @@ public class FreeSeatsBYBot extends TelegramLongPollingBot {
             sendMainMenu(chatId);
             session.setState(BotState.MAIN_MENU);
         } else if (data.equals("choose_train")) {
-            sendCitySelection(chatId);
-            session.setState(BotState.AWAITING_CITY);
+            sendFromCitySelection(chatId);
+            session.setState(BotState.AWAITING_FROM_CITY);
+        } else if (data.startsWith("from_city_")) {
+            String fromCity = data.substring(10);
+            session.setFromCity(fromCity);
+            sendToCitySelection(chatId, fromCity);
+            session.setState(BotState.AWAITING_TO_CITY);
+        } else if (data.startsWith("to_city_")) {
+            String toCity = data.substring(8);
+            session.setToCity(toCity);
+            sendDateSelection(chatId, false);
+            session.setState(BotState.AWAITING_DATE);
         } else if (data.equals("enter_train_number")) {
             sendText(chatId, "Введите номер поезда (например, 748Б):");
             session.setState(BotState.AWAITING_TRAIN_NUMBER);
         } else if (data.startsWith("city_")) {
+            // legacy, для совместимости
             String city = data.substring(5);
-            session.setCity(city);
+            session.setFromCity(city);
+            session.setToCity("Гомель");
             sendDateSelection(chatId, false);
             session.setState(BotState.AWAITING_DATE);
         } else if (data.startsWith("date_")) {
             String date = data.substring(5);
             session.setDate(date);
             if (session.getState() == BotState.AWAITING_DATE) {
-                // После выбора города и даты — показать список поездов (заглушка)
-                sendTrainList(chatId, session.getCity(), date);
+                sendTrainList(chatId, session.getFromCity(), session.getToCity(), date);
                 session.setState(BotState.AWAITING_TRAIN_CHOICE);
             } else if (session.getState() == BotState.AWAITING_DATE_AFTER_NUMBER) {
-                // После ввода номера поезда и даты — запуск мониторинга (заглушка)
                 sendText(chatId, "Мониторинг поезда " + session.getTrainNumber() + " на дату " + date + ". Уведомим, если появятся места!");
-                // TODO: Запустить мониторинг
+                monitorService.startMonitoring(chatId, session.getFromCity(), session.getToCity(), session.getTrainNumber(), date);
                 session.setState(BotState.MONITORING);
             }
         } else if (data.startsWith("train_")) {
             String trainNumber = data.substring(6);
             session.setTrainNumber(trainNumber);
             sendText(chatId, "Мониторинг поезда " + trainNumber + " на дату " + session.getDate() + ". Уведомим, если появятся места!");
-            // TODO: Запустить мониторинг
+            monitorService.startMonitoring(chatId, session.getFromCity(), session.getToCity(), trainNumber, session.getDate());
             session.setState(BotState.MONITORING);
         }
     }
@@ -102,14 +130,32 @@ public class FreeSeatsBYBot extends TelegramLongPollingBot {
         sendTextWithKeyboard(chatId, "Привет! Выберите действие:", markup);
     }
 
-    private void sendCitySelection(Long chatId) {
+    private void sendFromCitySelection(Long chatId) {
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         List<List<InlineKeyboardButton>> rows = new ArrayList<>();
-        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Минск").callbackData("city_Minsk").build()));
-        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Гомель").callbackData("city_Gomel").build()));
-        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Другой город").callbackData("city_Other").build()));
+        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Минск-Пассажирский").callbackData("from_city_Минск-Пассажирский").build()));
+        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Гомель").callbackData("from_city_Гомель").build()));
+        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Брест").callbackData("from_city_Брест").build()));
+        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Витебск").callbackData("from_city_Витебск").build()));
+        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Гродно").callbackData("from_city_Гродно").build()));
+        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Могилев").callbackData("from_city_Могилев").build()));
         markup.setKeyboard(rows);
         sendTextWithKeyboard(chatId, "Выберите город отправления:", markup);
+        System.out.println("[Bot] Выбор города отправления");
+    }
+
+    private void sendToCitySelection(Long chatId, String fromCity) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        if (!"Минск-Пассажирский".equals(fromCity)) rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Минск-Пассажирский").callbackData("to_city_Минск-Пассажирский").build()));
+        if (!"Гомель".equals(fromCity)) rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Гомель").callbackData("to_city_Гомель").build()));
+        if (!"Брест".equals(fromCity)) rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Брест").callbackData("to_city_Брест").build()));
+        if (!"Витебск".equals(fromCity)) rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Витебск").callbackData("to_city_Витебск").build()));
+        if (!"Гродно".equals(fromCity)) rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Гродно").callbackData("to_city_Гродно").build()));
+        if (!"Могилев".equals(fromCity)) rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Могилев").callbackData("to_city_Могилев").build()));
+        markup.setKeyboard(rows);
+        sendTextWithKeyboard(chatId, "Выберите город прибытия:", markup);
+        System.out.println("[Bot] Выбор города прибытия для " + fromCity);
     }
 
     private void sendDateSelection(Long chatId, boolean afterNumber) {
@@ -129,18 +175,28 @@ public class FreeSeatsBYBot extends TelegramLongPollingBot {
         sendTextWithKeyboard(chatId, afterNumber ? "Выберите дату для мониторинга:" : "Выберите дату отправления:", markup);
     }
 
-    private void sendTrainList(Long chatId, String city, String date) {
-        // Заглушка: список поездов (реализовать парсер позже)
+    private void sendTrainList(Long chatId, String fromCity, String toCity, String date) {
+        System.out.println("[Bot] Получение списка поездов " + fromCity + " → " + toCity + " на " + date);
+        java.util.List<String> trains = trainParser.findTrains(fromCity, toCity, date);
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
-        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
-        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("748Б").callbackData("train_748Б").build()));
-        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("482Б").callbackData("train_482Б").build()));
-        rows.add(Collections.singletonList(InlineKeyboardButton.builder().text("Другой поезд").callbackData("train_other").build()));
+        java.util.List<java.util.List<InlineKeyboardButton>> rows = new java.util.ArrayList<>();
+        if (trains.isEmpty()) {
+            sendText(chatId, "Поездов на выбранную дату не найдено. Попробуйте выбрать другую дату или направление.");
+            return;
+        }
+        for (String train : trains) {
+            rows.add(java.util.Collections.singletonList(
+                InlineKeyboardButton.builder().text(train).callbackData("train_" + train).build()
+            ));
+        }
+        rows.add(java.util.Collections.singletonList(
+            InlineKeyboardButton.builder().text("Другой поезд").callbackData("train_other").build()
+        ));
         markup.setKeyboard(rows);
         sendTextWithKeyboard(chatId, "Выберите поезд:", markup);
     }
 
-    private void sendText(Long chatId, String text) {
+    public void sendText(Long chatId, String text) {
         SendMessage message = new SendMessage();
         message.setChatId(chatId.toString());
         message.setText(text);
